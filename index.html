@@ -875,13 +875,13 @@ function build(){
     WEEKS.filter(w => String(w.season) === yr).sort((a,b) => a.week - b.week).forEach(wk => {
       const A = StatView.analyze(wk), al = A.alive;
       if (!al.length) return;
-      const info = {yr, week: wk.week, n: al.length, avg: avg(al.map(m => m.score)), cut: A.cut ? A.cut.score : null, opt: A.opt.pts, high: al[0], second: al[1] || null};
+      const info = {yr, week: wk.week, n: al.length, avg: avg(al.map(m => m.score)), cut: A.cut ? A.cut.score : null, opt: A.opt.pts, high: al[0], second: al[1] || null, po: wk.week >= po};
       WI[yr][wk.week] = info;
       const slateAvg = avg(al.flatMap(m => m.players.map(p => p.pts)));
       A.all.filter(m => m.out).forEach(m => { if (mg.has(m.name)) mg.get(m.name).S[yr].outScores[wk.week] = m.score; });
       al.forEach((m, i) => {
         const S = mg.get(m.name).S[yr];
-        const r = {name: m.name, yr, week: wk.week, score: m.score, ev: m.ev, pct: A.opt.pts ? m.score / A.opt.pts : 0, opt: A.opt.pts, pl: m.players, sal: m.sal, pp: m.pp, rank: i+1, n: al.length, high: i === 0 && al.length > 1, info,
+        const r = {name: m.name, yr, week: wk.week, score: m.score, ev: m.ev, pct: A.opt.pts ? m.score / A.opt.pts : 0, opt: A.opt.pts, pl: m.players, sal: m.sal, pp: m.pp, rank: i+1, n: al.length, high: i === 0 && al.length > 1, info, po: wk.week >= po,
           pspend: sum(m.players.filter(p => p.pos === 'P').map(p => p.sal)), maxsal: Math.max(...m.players.map(p => p.sal)), big: m.players.filter(p => p.sal >= 30).length, stacks: stacksOf(m.players, slateAvg)};
         S.rows.push(r); allRows.push(r);
       });
@@ -900,39 +900,43 @@ function build(){
       S.played = rs.length; S.avg = avg(sc); S.pct = avg(rs.map(r => r.pct));
       S.best = rs.length ? rs.reduce((a, b) => b.score > a.score ? b : a) : null;
       S.worst = rs.length ? rs.reduce((a, b) => b.score < a.score ? b : a) : null;
-      S.highs = rs.filter(r => r.high).length;
+      const rg = rs.filter(r => !r.po), pr = rs.filter(r => r.po);   // relative stats use regular-season weeks only
+      S.highs = rg.filter(r => r.high).length;
+      S.po = {played: pr.length, surv: pr.filter(r => !r.ev.includes('X')).length, avg: pr.length ? avg(pr.map(r => r.score)) : null, best: pr.length ? Math.max(...pr.map(r => r.score)) : null, wins: pr.filter(r => r.high).length, vs: pr.length ? avg(pr.map(r => r.score - r.info.avg)) : null};
       const ev = k => Object.values(S.ev).filter(v => v.includes(k)).length;
       S.won = ev('I'); S.used = ev('U'); S.back = ev('C'); S.elims = ev('X');
-      S.vs = avg(rs.map(r => r.score - r.info.avg));
+      S.vs = avg(rg.map(r => r.score - r.info.avg));
       S.sd = sdev(sc);
       S.totalW = SEASONS[S.yr].weeks.length; S.aliveW = SEASONS[S.yr].weeks.filter(w => !(S.tv.cells[w] && S.tv.cells[w].dim)).length;
     });
-    const Ss = Object.values(e.S), rows = Ss.flatMap(S => S.rows), picks = rows.flatMap(r => r.pl.map(p => ({...p, week: r.week, yr: r.yr, own: p.own})));
+    const Ss = Object.values(e.S), rows = Ss.flatMap(S => S.rows), picks = rows.flatMap(r => r.pl.map(p => ({...p, week: r.week, yr: r.yr, own: p.own, po: r.po}))), rgAll = rows.filter(r => !r.po), prAll = rows.filter(r => r.po);
     e.rows = rows; e.picks = picks;
     e.aliveW = sum(Ss.map(S => S.aliveW)); e.totalW = sum(Ss.map(S => S.totalW));
     e.seasons = Ss.length; e.titles = Ss.filter(S => S.champ).length;
     e.best = Math.min(...Ss.map(S => S.place)); e.avgPlace = avg(Ss.map(S => S.place));
     e.weeks = rows.length; e.avg = avg(rows.map(r => r.score)); e.pct = avg(rows.map(r => r.pct));
-    e.vs = avg(rows.map(r => r.score - r.info.avg));
+    e.vs = avg(rgAll.map(r => r.score - r.info.avg));
+    e.po = {seasons: Ss.filter(S => S.po.played).length, played: prAll.length, surv: sum(Ss.map(S => S.po.surv)), avg: prAll.length ? avg(prAll.map(r => r.score)) : null, best: prAll.length ? Math.max(...prAll.map(r => r.score)) : null, wins: sum(Ss.map(S => S.po.wins))};
     e.highs = Ss.reduce((a, S) => a + S.highs, 0); e.won = Ss.reduce((a, S) => a + S.won, 0); e.used = Ss.reduce((a, S) => a + S.used, 0);
     e.back = Ss.reduce((a, S) => a + S.back, 0); e.elims = Ss.reduce((a, S) => a + S.elims, 0);
     const sc = rows.map(r => r.score), stk = rows.filter(r => r.stacks.length);
-    e.sd = sdev(sc); e.aboveAvg = rows.length ? rows.filter(r => r.score > r.info.avg).length / rows.length : 0;
+    e.sd = sdev(sc); e.aboveAvg = rgAll.length ? rgAll.filter(r => r.score > r.info.avg).length / rgAll.length : 0;
     e.ppd = sum(sc) / (sum(rows.map(r => r.sal)) || 1); e.spend = avg(rows.map(r => r.sal)); e.pShare = avg(rows.map(r => r.pspend / (r.sal || 1)));
     e.star = avg(rows.map(r => r.maxsal)); e.big = avg(rows.map(r => r.big));
     e.stackRate = rows.length ? stk.length / rows.length : 0; e.stackScore = avg(stk.map(r => r.score)); e.noStackScore = avg(rows.filter(r => !r.stacks.length).map(r => r.score));
     e.stackList = rows.flatMap(r => r.stacks.map(x => ({...x, yr: r.yr, week: r.week, score: r.score})));
-    e.own = avg(picks.map(p => p.own)); e.ppShare = rows.length ? avg(rows.map(r => r.pp / (r.score || 1)).filter(isFinite)) : 0;
+    e.own = avg(picks.filter(p => !p.po).map(p => p.own)); e.ppShare = rows.length ? avg(rows.map(r => r.pp / (r.score || 1)).filter(isFinite)) : 0;
   });
   const lgRows = allRows, lgStk = lgRows.filter(r => r.stacks.length), sds = [...mg.values()].filter(e => e.weeks >= 8 && e.sd != null).map(e => e.sd);
-  const league = {sd: avg(sds), aboveAvg: avg(lgRows.map(r => r.score > r.info.avg ? 1 : 0)), ppd: sum(lgRows.map(r => r.score)) / sum(lgRows.map(r => r.sal)), spend: avg(lgRows.map(r => r.sal)), pShare: avg(lgRows.map(r => r.pspend / (r.sal || 1))),
+  const league = {sd: avg(sds), aboveAvg: avg(lgRows.filter(r => !r.po).map(r => r.score > r.info.avg ? 1 : 0)), ppd: sum(lgRows.map(r => r.score)) / sum(lgRows.map(r => r.sal)), spend: avg(lgRows.map(r => r.sal)), pShare: avg(lgRows.map(r => r.pspend / (r.sal || 1))),
     star: avg(lgRows.map(r => r.maxsal)), big: avg(lgRows.map(r => r.big)), stackRate: lgStk.length / lgRows.length, stackScore: avg(lgStk.map(r => r.score)), noStackScore: avg(lgRows.filter(r => !r.stacks.length).map(r => r.score)), slots: slotStats(lgRows),
-    own: avg(allRows.flatMap(r => r.pl.map(p => p.own))), ppShare: avg(allRows.map(r => r.pp / (r.score || 1)).filter(isFinite)), pct: avg(allRows.map(r => r.pct))};
+    own: avg(allRows.filter(r => !r.po).flatMap(r => r.pl.map(p => p.own))), ppShare: avg(allRows.map(r => r.pp / (r.score || 1)).filter(isFinite)), pct: avg(allRows.map(r => r.pct))};
   M = {years, mg, WI, seasons, allRows, weekFacts, league, names: [...mg.keys()].sort((a, b) => a.localeCompare(b))};
 }
 const model = () => { if (!M) build(); return M; };
 
 /* ---------- shared bits ---------- */
+const tileR = (n, l) => `<div class="stat"><b>${n}</b><span>${l}</span><small class="lg">regular season</small></div>`;
 const rows0 = e => e.rows.some(r => !r.stacks.length);
 const finish = S => S.champ ? 'Champion' : `${ord(S.place)} · out wk ${S.tv.lastOut}` + (S.tv.back !== null ? ` · back wk ${S.tv.back}` : '');
 const tile = (n, l, cls) => `<div class="stat${cls ? ' ' + cls : ''}"><b>${n}</b><span>${l}</span></div>`;
@@ -984,18 +988,22 @@ function manager(name){
   const opts = m.names.map(n => `<option value="${esc(n)}" ${n === name ? 'selected' : ''}>${esc(n)}</option>`).join('');
   let h = `<div class="wkhead"><div><h2 class="wktitle">${esc(name)}</h2><p class="sub">Yahoo: ${e.yahoo.map(esc).join(', ')} · ${yrs.join(', ')}</p></div>
     <div class="wknav"><label>Manager <select id="msel">${opts}</select></label></div></div>`;
-  h += `<section><div class="stats">${tile(e.titles, e.titles === 1 ? 'Title' : 'Titles', e.titles ? 'champ' : '')}${tile(ord(e.best), 'Best finish')}${tile(e.seasons, e.seasons === 1 ? 'Season' : 'Seasons')}${tile(`${e.aliveW} / ${e.totalW}`, 'Weeks in / total')}${tile(f1(e.avg), 'Avg score')}${tile(sgn(e.vs), 'Avg vs field')}${tile(e.highs, 'Weekly highs')}${tile(`${e.won} / ${e.used}`, 'Idols won / used')}${tile(e.back, 'Comebacks')}${tile(e.elims, 'Times eliminated')}</div></section>`;
+  h += `<section><div class="stats">${tile(e.titles, e.titles === 1 ? 'Title' : 'Titles', e.titles ? 'champ' : '')}${tile(ord(e.best), 'Best finish')}${tile(e.seasons, e.seasons === 1 ? 'Season' : 'Seasons')}${tile(`${e.aliveW} / ${e.totalW}`, 'Weeks in / total')}${tile(f1(e.avg), 'Avg score')}${tileR(sgn(e.vs), 'Avg vs field')}${tileR(e.highs, 'Weekly highs')}${tile(`${e.won} / ${e.used}`, 'Idols won / used')}${tile(e.back, 'Comebacks')}${tile(e.elims, 'Times eliminated')}</div></section>`;
   const rowsS = yrs.map(yr => { const S = e.S[yr];
     return `<tr><td class="l"><b>${yr}</b></td><td class="l">${esc(finish(S))}</td><td>${S.aliveW} / ${S.totalW}</td><td>${f1(S.avg)}</td><td>${sgn(S.vs)}</td><td>${S.sd == null ? '–' : f1(S.sd)}</td><td>${S.best ? f1(S.best.score) + `<small class="wk"> wk ${S.best.week}</small>` : '–'}</td><td>${S.worst ? f1(S.worst.score) + `<small class="wk"> wk ${S.worst.week}</small>` : '–'}</td><td>${S.highs}</td><td>${S.won} / ${S.used}</td><td>${S.back}</td><td>${pct(S.pct)}</td></tr>`; }).join('');
   h += `<section><h2>Season by season</h2>${tbl('<th class="l">Season</th><th class="l">Finish</th><th>Weeks in</th><th>Avg</th><th>Vs field</th><th>Std dev</th><th>Best week</th><th>Worst week</th><th>Highs</th><th>Idols won / used</th><th>Comebacks</th><th>Of best lineup</th>', rowsS, 'sticky1')}
-    <p class="key">Vs field is the average gap to the average score of managers still in that week. Of best lineup is the score as a share of the best possible lineup on the slate. Std dev is how much the weekly score swings, lower is steadier. Weeks where the manager was already out are not counted.</p></section>`;
+    <p class="key">Vs field and Highs use regular-season weeks only, because playoff fields are too small to compare against. Vs field is the average gap to the average score of managers still in that week. Of best lineup is the score as a share of the best possible lineup on the slate. Std dev is how much the weekly score swings, lower is steadier. Weeks where the manager was already out are not counted.</p></section>`;
   h += `<section><h2>Week by week</h2><p class="key">Bars are the weekly score. The dashed grey line is the field average and the dashed red line is the cut (the best score among managers eliminated that week). Shaded weeks are playoffs. Grey bars are weeks they were already out (a short stub means no lineup was set or counted). Marks: <b class="r">X</b> eliminated, ↑ comeback, ★ idol won, ◆ idol used.</p>${yrs.slice().reverse().map(yr => chart(e, yr)).join('')}</section>`;
+  const poRows = yrs.filter(y => e.S[y].po.played).map(y => { const S = e.S[y], p = S.po; return `<tr><td class="l"><b>${y}</b></td><td class="l">${esc(finish(S))}</td><td>${p.played}</td><td>${p.surv}</td><td>${f1(p.avg)}</td><td>${f1(p.best)}</td><td>${p.wins}</td><td>${sgn(p.vs)}</td></tr>`; }).join('');
+  h += `<section><h2>Playoffs</h2>${e.po.played ? `<div class="stats">${tile(`${e.po.seasons} / ${e.seasons}`, 'Playoff appearances')}${tile(`${e.po.surv} / ${e.po.played}`, 'Rounds survived / played')}${tile(f1(e.po.avg), 'Avg playoff score')}${tile(f1(e.po.best), 'Best playoff score')}${tile(e.po.wins, 'Round wins')}</div>
+    ${tbl('<th class="l">Season</th><th class="l">Finish</th><th>Rounds</th><th>Survived</th><th>Avg</th><th>Best</th><th>Round wins</th><th>Vs field</th>', poRows, 'sticky1')}
+    <p class="key">A round win is the top score among managers still in that round. A title counts every round as survived. Playoff fields are small, so these are kept apart from the regular-season stats above.</p>` : '<p class="key">No playoff appearances yet.</p>'}</section>`;
   const L = m.league, vsl = (v, lg, fmt) => `${fmt(v)} <span class="avgn">league ${fmt(lg)}</span>`;
   const tileL = (v, lg, fmt, label) => `<div class="stat"><b>${fmt(v)}</b><span>${label}</span><small class="lg">league ${fmt(lg)}</small></div>`;
   const hi = e.rows.length ? e.rows.reduce((a, b) => b.score > a.score ? b : a) : null, lo = e.rows.length ? e.rows.reduce((a, b) => b.score < a.score ? b : a) : null;
   h += `<section><h2>Consistency</h2><div class="stats">
-    ${e.sd == null ? tile('–', 'Std dev') : tileL(e.sd, L.sd, f1, 'Std dev')}${tileL(e.aboveAvg, L.aboveAvg, pct, 'Weeks above field avg')}${hi ? tile(f1(hi.score), `Highest · ${hi.yr} wk ${hi.week}`) : ''}${lo ? tile(f1(lo.score), `Lowest · ${lo.yr} wk ${lo.week}`) : ''}</div>
-    <p class="key">Std dev is how much the weekly score swings, so lower means steadier and higher means boom or bust. League std dev averages managers with 8+ weeks.</p></section>`;
+    ${e.sd == null ? tile('–', 'Std dev') : tileL(e.sd, L.sd, f1, 'Std dev')}${tileL(e.aboveAvg, L.aboveAvg, pct, 'Above field avg (reg. season)')}${hi ? tile(f1(hi.score), `Highest · ${hi.yr} wk ${hi.week}`) : ''}${lo ? tile(f1(lo.score), `Lowest · ${lo.yr} wk ${lo.week}`) : ''}</div>
+    <p class="key">Std dev is how much the weekly score swings across all weeks, so lower means steadier and higher means boom or bust. League std dev averages managers with 8+ weeks. Above field average counts regular-season weeks only.</p></section>`;
   const ms = slotStats(e.rows), sr = SLOTS.map(g => `<tr><td class="l">${g}</td><td>$${f1(ms[g].spend)}</td><td>$${f1(L.slots[g].spend)}</td><td>${f1(ms[g].pts)}</td><td>${f1(L.slots[g].pts)}</td></tr>`).join('');
   h += `<section><h2>Spending style</h2><div class="stats">
     ${tileL(e.spend, L.spend, v => '$' + f1(v), 'Avg salary used')}${tileL(e.pShare, L.pShare, pct, 'Share on pitchers')}${tileL(e.ppd, L.ppd, f2, 'Points per $')}${tileL(e.star, L.star, v => '$' + f1(v), 'Priciest player')}${tileL(e.big, L.big, f1, 'Players at $30+')}</div>
@@ -1015,7 +1023,7 @@ function manager(name){
   const pkRow = p => `<tr><td class="l">${esc(p.name)}<small style="color:var(--muted)"> ${esc(p.pos)}</small></td><td>${p.yr} wk ${p.week}</td><td>$${p.sal}</td><td><b>${f1(p.pts)}</b></td></tr>`;
   const cmp = (v, lg, fmt, lo) => `${fmt(v)} <span class="avgn">league ${fmt(lg)}</span>`;
   h += `<section><h2>How they build lineups</h2><div class="stats">
-    ${tile(f1(e.own) + '%', 'Avg ownership per pick')}${tile(pct(e.pct), 'Of best lineup')}${tile(pct(e.ppShare), 'Points from pitchers')}</div>
+    ${tileR(f1(e.own) + '%', 'Avg ownership per pick')}${tile(pct(e.pct), 'Of best lineup')}${tile(pct(e.ppShare), 'Points from pitchers')}</div>
     <p class="key">League averages for comparison: ${f1(m.league.own)}% ownership per pick (lower means more contrarian), ${pct(m.league.pct)} of the best lineup, ${pct(m.league.ppShare)} of points from pitchers.</p>
     <div class="two3"><div><h3>Most-used players</h3>${tbl('<th class="l">Player</th><th>Times</th><th>Avg pts</th>', fav.map(c => `<tr><td class="l">${esc(c.name)}<small style="color:var(--muted)"> ${esc(c.pos)}</small></td><td>${c.n}</td><td>${f1(c.pts / c.n)}</td></tr>`).join(''))}</div>
     <div><h3>Best picks</h3>${tbl('<th class="l">Player</th><th>When</th><th>Cost</th><th>Pts</th>', pk.slice(0, 6).map(pkRow).join(''))}</div>
@@ -1062,10 +1070,10 @@ function records(){
   cards.push(card('Highest scores', '', top(R, (a, b) => b.score - a.score).map(r => ({a: mlink(r.name), b: ctx(r), v: f1(r.score)}))));
   cards.push(card('Lowest scores', 'Managers who were still in.', top(R, (a, b) => a.score - b.score).map(r => ({a: mlink(r.name), b: `${ctx(r)} · ${r.ev.includes('X') ? 'eliminated' : r.ev.includes('U') ? 'idol used' : 'survived'}`, v: f1(r.score)}))));
   cards.push(card('Highest score to be eliminated', '', top(R.filter(r => r.ev.includes('X')), (a, b) => b.score - a.score).map(r => ({a: mlink(r.name), b: `${ctx(r)} · cut ${f1(r.info.cut)}`, v: f1(r.score)}))));
-  const surv = R.filter(r => r.info.cut !== null && !r.ev.includes('X') && !r.ev.includes('U') && r.score >= r.info.cut).map(r => ({...r, mar: r.score - r.info.cut}));
-  cards.push(card('Closest survivals', 'Score above the cut, from managers who lived.', top(surv, (a, b) => a.mar - b.mar).map(r => ({a: mlink(r.name), b: `${ctx(r)} · ${f1(r.score)} vs cut ${f1(r.info.cut)}`, v: '+' + f1(r.mar)}))));
-  const wins = m.weekFacts.filter(w => w.second).map(w => ({w, mar: w.high.score - w.second.score}));
-  cards.push(card('Biggest wins', 'Top score minus second place.', top(wins, (a, b) => b.mar - a.mar).map(o => ({a: mlink(o.w.high.name), b: `${o.w.yr} · week ${o.w.week} · ${f1(o.w.high.score)} vs ${esc(o.w.second.name)} ${f1(o.w.second.score)}`, v: '+' + f1(o.mar)}))));
+  const surv = R.filter(r => !r.po && r.info.cut !== null && !r.ev.includes('X') && !r.ev.includes('U') && r.score >= r.info.cut).map(r => ({...r, mar: r.score - r.info.cut}));
+  cards.push(card('Closest survivals', 'Score above the cut, from managers who lived. Regular season.', top(surv, (a, b) => a.mar - b.mar).map(r => ({a: mlink(r.name), b: `${ctx(r)} · ${f1(r.score)} vs cut ${f1(r.info.cut)}`, v: '+' + f1(r.mar)}))));
+  const wins = m.weekFacts.filter(w => !w.po && w.second).map(w => ({w, mar: w.high.score - w.second.score}));
+  cards.push(card('Biggest wins', 'Top score minus second place. Regular season.', top(wins, (a, b) => b.mar - a.mar).map(o => ({a: mlink(o.w.high.name), b: `${o.w.yr} · week ${o.w.week} · ${f1(o.w.high.score)} vs ${esc(o.w.second.name)} ${f1(o.w.second.score)}`, v: '+' + f1(o.mar)}))));
   cards.push(card('Best of the best possible lineup', 'Share of the best lineup on the slate.', top(R, (a, b) => b.pct - a.pct).map(r => ({a: mlink(r.name), b: `${ctx(r)} · ${f1(r.score)} of ${f1(r.opt)}`, v: pct(r.pct)}))));
   const pg = new Map();
   R.forEach(r => r.pl.forEach(p => { const k = `${p.name}|${r.yr}|${r.week}`; if (!pg.has(k)) pg.set(k, {p, yr: r.yr, week: r.week, owners: []}); pg.get(k).owners.push(r.name); }));
@@ -1073,16 +1081,16 @@ function records(){
   const pc = new Map();
   R.forEach(r => r.pl.forEach(p => { if (!pc.has(p.name)) pc.set(p.name, {name: p.name, pos: p.pos, n: 0, pts: 0, sal: 0}); const c = pc.get(p.name); c.n++; c.pts += p.pts; c.sal += p.sal; }));
   cards.push(card('Most-used players', 'Times in a lineup, all seasons.', top([...pc.values()], (a, b) => b.n - a.n || b.pts - a.pts).map(c => ({a: esc(c.name) + ` <span style="color:var(--muted)">${esc(c.pos)}</span>`, b: `${f1(c.pts / c.n)} avg pts`, v: c.n}))));
-  cards.push(card('Most weekly highs', 'Weeks finishing first among managers still in.', top([...m.mg.values()], (a, b) => b.highs - a.highs).map(e => ({a: mlink(e.name), b: Object.keys(e.S).sort().map(y => `${y}: ${e.S[y].highs}`).join(' · '), v: e.highs}))));
+  cards.push(card('Most weekly highs', 'Weeks finishing first among managers still in. Regular season.', top([...m.mg.values()], (a, b) => b.highs - a.highs).map(e => ({a: mlink(e.name), b: Object.keys(e.S).sort().map(y => `${y}: ${e.S[y].highs}`).join(' · '), v: e.highs}))));
   const val = top([...pg.values()].filter(o => o.p.sal >= 10), (a, b) => b.p.pts / b.p.sal - a.p.pts / a.p.sal);
   cards.push(card('Best value picks', 'Points per dollar in one week, players at $10 or more.', val.map(o => ({a: esc(o.p.name) + ` <span style="color:var(--muted)">${esc(o.p.pos)}</span>`, b: `${o.yr} · week ${o.week} · ${f1(o.p.pts)} pts for $${o.p.sal} · ${o.owners.slice(0, 2).map(esc).join(', ')}${o.owners.length > 2 ? ` +${o.owners.length - 2}` : ''}`, v: f2(o.p.pts / o.p.sal)}))));
   const pcl = [...pc.values()].filter(c => c.n >= 8);
   cards.push(card('Best value players, all time', 'Total points over total salary, 8+ times in a lineup.', top(pcl, (a, b) => b.pts / b.sal - a.pts / a.sal).map(c => ({a: esc(c.name) + ` <span style="color:var(--muted)">${esc(c.pos)}</span>`, b: `${c.n} times · avg $${f1(c.sal / c.n)} · ${f1(c.pts / c.n)} avg pts`, v: f2(c.pts / c.sal)}))));
   cards.push(card('Worst value players, all time', 'Same rule, lowest points per dollar.', top(pcl, (a, b) => a.pts / a.sal - b.pts / b.sal).map(c => ({a: esc(c.name) + ` <span style="color:var(--muted)">${esc(c.pos)}</span>`, b: `${c.n} times · avg $${f1(c.sal / c.n)} · ${f1(c.pts / c.n)} avg pts`, v: f2(c.pts / c.sal)}))));
-  const streaks = test => { const out = []; m.mg.forEach(e => Object.values(e.S).forEach(S => { let best = null, cur = null; S.rows.forEach(r => { if (test(r)){ if (cur && r.week === cur.end + 1){ cur.end = r.week; cur.len++; } else cur = {start: r.week, end: r.week, len: 1, name: e.name, yr: S.yr}; if (!best || cur.len > best.len) best = {...cur}; } else cur = null; }); if (best) out.push(best); })); return out.sort((a, b) => b.len - a.len || a.yr.localeCompare(b.yr)).slice(0, 5).map(o => ({a: mlink(o.name), b: `${o.yr} · weeks ${o.start}${o.end !== o.start ? '–' + o.end : ''}`, v: o.len + (o.len === 1 ? ' week' : ' weeks')})); };
-  cards.push(card('Longest streak above the field average', 'Consecutive weeks scoring above the average of managers still in. Best run per manager per season.', streaks(r => r.score > r.info.avg)));
-  cards.push(card('Longest streak of weekly highs', 'Consecutive weeks as the top score.', streaks(r => r.high)));
-  cards.push(card('Longest streak of 100+ scores', '', streaks(r => r.score >= 100)));
+  const streaks = test => { const out = []; m.mg.forEach(e => Object.values(e.S).forEach(S => { let best = null, cur = null; S.rows.filter(r => !r.po).forEach(r => { if (test(r)){ if (cur && r.week === cur.end + 1){ cur.end = r.week; cur.len++; } else cur = {start: r.week, end: r.week, len: 1, name: e.name, yr: S.yr}; if (!best || cur.len > best.len) best = {...cur}; } else cur = null; }); if (best) out.push(best); })); return out.sort((a, b) => b.len - a.len || a.yr.localeCompare(b.yr)).slice(0, 5).map(o => ({a: mlink(o.name), b: `${o.yr} · weeks ${o.start}${o.end !== o.start ? '–' + o.end : ''}`, v: o.len + (o.len === 1 ? ' week' : ' weeks')})); };
+  cards.push(card('Longest streak above the field average', 'Consecutive regular-season weeks scoring above the average of managers still in. Best run per manager per season.', streaks(r => r.score > r.info.avg)));
+  cards.push(card('Longest streak of weekly highs', 'Consecutive regular-season weeks as the top score.', streaks(r => r.high)));
+  cards.push(card('Longest streak of 100+ scores', 'Regular season.', streaks(r => r.score >= 100)));
   return `<div class="recs">${cards.join('')}</div>`;
 }
 function overview(){
@@ -1090,13 +1098,17 @@ function overview(){
   const rowsA = m.years.slice().reverse().map(yr => { const s = m.seasons[yr], o = s.order, fw = m.WI[yr], all = Object.values(fw);
     const nm = i => o[i] ? `${mlink(o[i].name)}` : '–';
     return `<tr><td class="l"><b>${yr}</b></td><td class="l">${s.champ.champ ? mlink(s.champ.name) : '–'}</td><td class="l">${nm(1)}</td><td class="l">${nm(2)}</td><td>${s.n}</td><td>${s.weeks}</td></tr>`; }).join('');
-  const rowsB = m.years.slice().reverse().map(yr => { const all = Object.values(m.WI[yr]), cuts = all.filter(w => w.cut !== null), rs = m.allRows.filter(r => r.yr === yr);
-    return `<tr><td class="l"><b>${yr}</b></td><td>${f1(avg(all.map(w => w.high.score)))}</td><td>${f1(avg(rs.map(r => r.score)))}</td><td>${cuts.length ? f1(avg(cuts.map(w => w.cut))) : '–'}</td><td>${f1(Math.max(...rs.map(r => r.score)))}</td><td>${f1(avg(all.map(w => w.opt)))}</td></tr>`; }).join('');
+  const rowsB = m.years.slice().reverse().map(yr => { const allW = Object.values(m.WI[yr]), all = allW.filter(w => !w.po), cuts = all.filter(w => w.cut !== null), rsAll = m.allRows.filter(r => r.yr === yr), rs = rsAll.filter(r => !r.po);
+    return `<tr><td class="l"><b>${yr}</b></td><td>${f1(avg(all.map(w => w.high.score)))}</td><td>${f1(avg(rs.map(r => r.score)))}</td><td>${cuts.length ? f1(avg(cuts.map(w => w.cut))) : '–'}</td><td>${f1(Math.max(...rsAll.map(r => r.score)))}</td><td>${f1(avg(allW.map(w => w.opt)))}</td></tr>`; }).join('');
+  const poList = [...m.mg.values()].filter(e => e.po.played).sort((a, b) => b.po.surv - a.po.surv || b.po.avg - a.po.avg);
+  const poBody = poList.map(e => `<tr><td class="l">${mlink(e.name)}</td><td>${e.po.seasons}</td><td>${e.po.played}</td><td>${e.po.surv}</td><td>${f1(e.po.avg)}</td><td>${f1(e.po.best)}</td><td>${e.po.wins}</td><td>${e.titles}</td></tr>`).join('');
+  const poTop = card('Highest playoff scores', '', m.allRows.filter(r => r.po).sort((a, b) => b.score - a.score).slice(0, 5).map(r => ({a: mlink(r.name), b: `${r.yr} · week ${r.week} · ${r.n} left`, v: f1(r.score)})));
   return `<div class="wkhead"><div><h2 class="wktitle">League history</h2><p class="sub">${m.years[0]}–${m.years[m.years.length - 1]} · ${m.mg.size} managers · ${m.weekFacts.length} weeks</p></div></div>
     <section><h2>Season results</h2>${tbl('<th class="l">Season</th><th class="l">Champion</th><th class="l">Runner-up</th><th class="l">Third</th><th>Managers</th><th>Weeks</th>', rowsA)}</section>
     <section><h2>Season scoring</h2>${tbl('<th class="l">Season</th><th>Avg top score</th><th>Avg score</th><th>Avg cut</th><th>Highest score</th><th>Avg best lineup</th>', rowsB)}
-      <p class="key">Averages are per week across managers still in. The cut is the best score among managers eliminated that week, so weeks with no elimination are left out of that average. Best lineup is the best possible lineup on that week's slate.</p></section>
-    <section><h2>Career leaderboard</h2><p class="key">Click a column to sort. Averages only count weeks a manager was still in.</p><div id="lbwrap">${leaderboard()}</div></section>
+      <p class="key">Top score, average score and cut are regular-season weeks only, across managers still in. Highest score and best lineup include the playoffs. The cut is the best score among managers eliminated that week, so weeks with no elimination are left out of that average. Best lineup is the best possible lineup on that week's slate.</p></section>
+    <section><h2>Career leaderboard</h2><p class="key">Click a column to sort. Averages only count weeks a manager was still in. Vs field and weekly highs count regular-season weeks only.</p><div id="lbwrap">${leaderboard()}</div></section>
+    <section><h2>Playoffs</h2><p class="key">Playoff weeks are kept out of the regular-season stats because the fields are small. Round wins are top scores among managers still in.</p>${tbl('<th class="l">Manager</th><th>Appearances</th><th>Rounds</th><th>Survived</th><th>Avg score</th><th>Best score</th><th>Round wins</th><th>Titles</th>', poBody, 'sticky1')}<div class="recs" style="margin-top:18px">${poTop}</div></section>
     <section><h2>Records</h2>${records()}</section>`;
 }
 return {ready: () => !!M, model, manager, overview, leaderboard, setSort, names: () => model().names};
