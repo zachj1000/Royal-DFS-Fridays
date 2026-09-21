@@ -394,6 +394,11 @@ small.wk{color:var(--muted);font-size:12px}
   .cscroll{padding-inline:2px}
 }
 
+.rec tr.xtra{display:none}
+.rec.open tr.xtra{display:table-row}
+.rec .more{margin-top:8px;background:none;border:1px solid var(--line,#ccc);border-radius:8px;padding:8px 14px;font:inherit;font-size:13px;font-weight:600;color:inherit;cursor:pointer;min-height:40px}
+.rec .more:hover{background:rgba(127,127,127,.12)}
+
 
 </style>
 </head>
@@ -1061,10 +1066,11 @@ function leaderboard(){
   return tbl(head, body, 'lb sticky1');
 }
 function card(title, key, rows){
-  return `<div class="rec"><h3>${title}</h3>${key ? `<p class="key">${key}</p>` : ''}<div class="scroll"><table><tbody>${rows.map((r, i) => `<tr><td class="l rk">${i + 1}</td><td class="l">${r.a}<small>${r.b}</small></td><td><b>${r.v}</b></td></tr>`).join('')}</tbody></table></div></div>`;
+  const N = rows.length, more = N > 5;
+  return `<div class="rec"><h3>${title}</h3>${key ? `<p class="key">${key}</p>` : ''}<div class="scroll"><table><tbody>${rows.map((r, i) => `<tr${i >= 5 ? ' class="xtra"' : ''}><td class="l rk">${i + 1}</td><td class="l">${r.a}<small>${r.b}</small></td><td><b>${r.v}</b></td></tr>`).join('')}</tbody></table></div>${more ? `<button type="button" class="more" data-more="${N}" aria-expanded="false">Show top ${N}</button>` : ''}</div>`;
 }
 function records(){
-  const m = model(), R = m.allRows, top = (arr, f, n = 5) => arr.slice().sort(f).slice(0, n);
+  const m = model(), R = m.allRows, top = (arr, f, n = 25) => arr.slice().sort(f).slice(0, n);
   const ctx = r => `${r.yr} · week ${r.week}`;
   const cards = [];
   cards.push(card('Highest scores', '', top(R, (a, b) => b.score - a.score).map(r => ({a: mlink(r.name), b: ctx(r), v: f1(r.score)}))));
@@ -1087,7 +1093,7 @@ function records(){
   const pcl = [...pc.values()].filter(c => c.n >= 8);
   cards.push(card('Best value players, all time', 'Total points over total salary, 8+ times in a lineup.', top(pcl, (a, b) => b.pts / b.sal - a.pts / a.sal).map(c => ({a: esc(c.name) + ` <span style="color:var(--muted)">${esc(c.pos)}</span>`, b: `${c.n} times · avg $${f1(c.sal / c.n)} · ${f1(c.pts / c.n)} avg pts`, v: f2(c.pts / c.sal)}))));
   cards.push(card('Worst value players, all time', 'Same rule, lowest points per dollar.', top(pcl, (a, b) => a.pts / a.sal - b.pts / b.sal).map(c => ({a: esc(c.name) + ` <span style="color:var(--muted)">${esc(c.pos)}</span>`, b: `${c.n} times · avg $${f1(c.sal / c.n)} · ${f1(c.pts / c.n)} avg pts`, v: f2(c.pts / c.sal)}))));
-  const streaks = test => { const out = []; m.mg.forEach(e => Object.values(e.S).forEach(S => { let best = null, cur = null; S.rows.filter(r => !r.po).forEach(r => { if (test(r)){ if (cur && r.week === cur.end + 1){ cur.end = r.week; cur.len++; } else cur = {start: r.week, end: r.week, len: 1, name: e.name, yr: S.yr}; if (!best || cur.len > best.len) best = {...cur}; } else cur = null; }); if (best) out.push(best); })); return out.sort((a, b) => b.len - a.len || a.yr.localeCompare(b.yr)).slice(0, 5).map(o => ({a: mlink(o.name), b: `${o.yr} · weeks ${o.start}${o.end !== o.start ? '–' + o.end : ''}`, v: o.len + (o.len === 1 ? ' week' : ' weeks')})); };
+  const streaks = test => { const out = []; m.mg.forEach(e => Object.values(e.S).forEach(S => { let best = null, cur = null; S.rows.filter(r => !r.po).forEach(r => { if (test(r)){ if (cur && r.week === cur.end + 1){ cur.end = r.week; cur.len++; } else cur = {start: r.week, end: r.week, len: 1, name: e.name, yr: S.yr}; if (!best || cur.len > best.len) best = {...cur}; } else cur = null; }); if (best) out.push(best); })); return out.sort((a, b) => b.len - a.len || a.yr.localeCompare(b.yr)).slice(0, 25).map(o => ({a: mlink(o.name), b: `${o.yr} · weeks ${o.start}${o.end !== o.start ? '–' + o.end : ''}`, v: o.len + (o.len === 1 ? ' week' : ' weeks')})); };
   cards.push(card('Longest streak above the field average', 'Consecutive regular-season weeks scoring above the average of managers still in. Best run per manager per season.', streaks(r => r.score > r.info.avg)));
   cards.push(card('Longest streak of weekly highs', 'Consecutive regular-season weeks as the top score.', streaks(r => r.high)));
   cards.push(card('Longest streak of 100+ scores', 'Regular season.', streaks(r => r.score >= 100)));
@@ -1102,7 +1108,7 @@ function overview(){
     return `<tr><td class="l"><b>${yr}</b></td><td>${f1(avg(all.map(w => w.high.score)))}</td><td>${f1(avg(rs.map(r => r.score)))}</td><td>${cuts.length ? f1(avg(cuts.map(w => w.cut))) : '–'}</td><td>${f1(Math.max(...rsAll.map(r => r.score)))}</td><td>${f1(avg(allW.map(w => w.opt)))}</td></tr>`; }).join('');
   const poList = [...m.mg.values()].filter(e => e.po.played).sort((a, b) => b.po.surv - a.po.surv || b.po.avg - a.po.avg);
   const poBody = poList.map(e => `<tr><td class="l">${mlink(e.name)}</td><td>${e.po.seasons}</td><td>${e.po.played}</td><td>${e.po.surv}</td><td>${f1(e.po.avg)}</td><td>${f1(e.po.best)}</td><td>${e.po.wins}</td><td>${e.titles}</td></tr>`).join('');
-  const poTop = card('Highest playoff scores', '', m.allRows.filter(r => r.po).sort((a, b) => b.score - a.score).slice(0, 5).map(r => ({a: mlink(r.name), b: `${r.yr} · week ${r.week} · ${r.n} left`, v: f1(r.score)})));
+  const poTop = card('Highest playoff scores', '', m.allRows.filter(r => r.po).sort((a, b) => b.score - a.score).slice(0, 15).map(r => ({a: mlink(r.name), b: `${r.yr} · week ${r.week} · ${r.n} left`, v: f1(r.score)})));
   return `<div class="wkhead"><div><h2 class="wktitle">League history</h2><p class="sub">${m.years[0]}–${m.years[m.years.length - 1]} · ${m.mg.size} managers · ${m.weekFacts.length} weeks</p></div></div>
     <section><h2>Season results</h2>${tbl('<th class="l">Season</th><th class="l">Champion</th><th class="l">Runner-up</th><th class="l">Third</th><th>Managers</th><th>Weeks</th>', rowsA)}</section>
     <section><h2>Season scoring</h2>${tbl('<th class="l">Season</th><th>Avg top score</th><th>Avg score</th><th>Avg cut</th><th>Highest score</th><th>Avg best lineup</th>', rowsB)}
@@ -1184,6 +1190,7 @@ vw.addEventListener('click', e => {
 
 document.addEventListener('click', e => {
   const a = e.target.closest('[data-m]'); if (a){ e.preventDefault(); show('managers', a.dataset.m); return; }
+  const mb = e.target.closest('button[data-more]'); if (mb){ const c = mb.closest('.rec'), o = c.classList.toggle('open'); mb.setAttribute('aria-expanded', o); mb.textContent = o ? 'Show top 5' : 'Show top ' + mb.dataset.more; return; }
   const s = e.target.closest('button[data-sort]'); if (s){ HistoryView.setSort(s.dataset.sort); $('#lbwrap').innerHTML = HistoryView.leaderboard(); }
 });
 vm.addEventListener('change', e => { if (e.target.id === 'msel') show('managers', e.target.value); });
